@@ -18,6 +18,7 @@ from typing import Any, ClassVar
 import numpy as np
 import numpy.typing as npt
 import stim
+from deltakit_core.analysis import fit_binomial
 
 from deltakit_explorer.data._converter import (
     read_01,
@@ -932,6 +933,27 @@ class DecodingResult:
             return float("inf")
         hits = self.shots - self.fails
         return (self.fails * hits / self.shots**3) ** 0.5
+
+    def get_logical_error_probability_fit(
+        self,
+        *,
+        max_likelihood_factor: float = 1000.0,
+    ):
+        """Asymmetric binomial likelihood interval for the logical error rate.
+
+        See :func:`deltakit_core.analysis.fit_binomial`.
+
+        Args:
+            max_likelihood_factor: Passed to :func:`~deltakit_core.analysis.fit_binomial`.
+
+        Returns:
+            :class:`~deltakit_core.analysis.ProbabilityFit` with asymmetric error bounds.
+        """
+        return fit_binomial(
+            num_shots=self.shots,
+            num_hits=self.fails,
+            max_likelihood_factor=max_likelihood_factor,
+        )
 
     @classmethod
     def combine(cls, results: Iterable[DecodingResult]) -> DecodingResult:

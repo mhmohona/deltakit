@@ -5,10 +5,41 @@ from math import floor
 
 import numpy as np
 import numpy.typing as npt
+from deltakit_core.analysis import (
+    DEFAULT_MAX_LIKELIHOOD_FACTOR,
+    ProbabilityFit,
+    effective_stddev_from_fit,
+    effective_stddev_from_fits,
+    fit_binomial_batch,
+)
 from scipy.optimize import curve_fit
 
 
-@dataclass(frozen=True)
+def _resolve_lep_input_stddevs(
+    *,
+    logical_error_probabilities_stddev: npt.NDArray[np.floating]
+    | Sequence[float]
+    | None,
+    logical_error_probabilities_fit: Sequence[ProbabilityFit] | None,
+) -> npt.NDArray[np.float64]:
+    if logical_error_probabilities_fit is not None:
+        if logical_error_probabilities_stddev is not None:
+            warnings.warn(
+                "Both `logical_error_probabilities_stddev` and "
+                "`logical_error_probabilities_fit` were provided; using fits.",
+                stacklevel=3,
+            )
+        return effective_stddev_from_fits(logical_error_probabilities_fit)
+    if logical_error_probabilities_stddev is None:
+        msg = (
+            "Provide `logical_error_probabilities_stddev` or "
+            "`logical_error_probabilities_fit`."
+        )
+        raise ValueError(msg)
+    return np.asarray(logical_error_probabilities_stddev, dtype=np.float64)
+
+
+@dataclass(frozen=True, eq=False)
 class LogicalErrorProbabilityPerRoundData:
     """Container class to hold `compute_logical_error_per_round` results.
 
@@ -26,12 +57,26 @@ class LogicalErrorProbabilityPerRoundData:
     spam_error: float
     spam_error_stddev: float
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, LogicalErrorProbabilityPerRoundData):
+            return NotImplemented
+        return (
+            self.leppr == other.leppr
+            and self.leppr_stddev == other.leppr_stddev
+            and np.array_equal(self.num_rounds, other.num_rounds)
+            and self.spam_error == other.spam_error
+            and self.spam_error_stddev == other.spam_error_stddev
+        )
+
 
 def compute_logical_error_per_round(
     num_rounds: npt.NDArray[np.int_] | Sequence[int],
     logical_error_probabilities: npt.NDArray[np.floating] | Sequence[float],
-    logical_error_probabilities_stddev: npt.NDArray[np.floating] | Sequence[float],
+    logical_error_probabilities_stddev: (
+        npt.NDArray[np.floating] | Sequence[float] | None
+    ) = None,
     *,
+    logical_error_probabilities_fit: Sequence[ProbabilityFit] | None = None,
     force_include_single_round: bool = False,
 ) -> LogicalErrorProbabilityPerRoundData:
     """Compute the logical error probability per round from different logical error
@@ -67,10 +112,13 @@ def compute_logical_error_per_round(
         logical_error_probabilities (npt.NDArray[numpy.floating] | Sequence[float]):
             logical error probabilities computed for each of the provided
             ``num_rounds``. Should be the same length as ``num_rounds``.
-        logical_error_probabilities_stddev (npt.NDArray[numpy.floating] | Sequence[float]):
-            standard deviation of the logical error probabilities provided in
-            ``logical_error_probabilities``. Should be the same length as
-            ``num_rounds``.
+        logical_error_probabilities_stddev (npt.NDArray[numpy.floating] | Sequence[float] | None):
+            symmetric standard deviation per point (Gaussian approximation). Provide
+            this or ``logical_error_probabilities_fit``.
+        logical_error_probabilities_fit (Sequence[ProbabilityFit] | None):
+            binomial likelihood intervals per point. When set, used for weighted fit
+            (average of lower/upper margins as effective sigma). Overrides ``stddev`` if
+            both are given.
         force_include_single_round (bool):
             if ``True``, data obtained from 1-round experiment will be used in the
             computation if provided in ``num_rounds``. Default to ``False`` which
@@ -93,14 +141,26 @@ def compute_logical_error_per_round(
             spam, spam_stddev = res.spam_error, res.spam_error_stddev
 
     """
-    # Get the inputs as numpy arrays.
-    # Sanitisation: also make sure that the inputs are sorted.
+    num_rounds = np.asarray(num_rounds)
+    logical_error_probabilities = np.asarray(logical_error_probabilities)
+    if logical_error_probabilities_fit is not None:
+        if len(logical_error_probabilities_fit) != num_rounds.size:
+            msg = "logical_error_probabilities_fit length must match num_rounds."
+            raise ValueError(msg)
+        lep_fits: list[ProbabilityFit | None] = list(logical_error_probabilities_fit)
+    else:
+        lep_fits = [None] * num_rounds.size
+
     isort = np.argsort(num_rounds)
-    num_rounds = np.asarray(num_rounds)[isort]
-    logical_error_probabilities = np.asarray(logical_error_probabilities)[isort]
-    logical_error_probabilities_stddev = np.asarray(logical_error_probabilities_stddev)[
-        isort
-    ]
+    num_rounds = num_rounds[isort]
+    logical_error_probabilities = logical_error_probabilities[isort]
+    logical_error_probabilities_stddev = _resolve_lep_input_stddevs(
+        logical_error_probabilities_stddev=logical_error_probabilities_stddev,
+        logical_error_probabilities_fit=lep_fits
+        if logical_error_probabilities_fit is not None
+        else None,
+    )[isort]
+    lep_fits = [lep_fits[i] for i in isort]
 
     # Check that we do not have duplicate data for the same number of rounds as that
     # will confuse the numerical methods used in this function.
@@ -124,12 +184,14 @@ def compute_logical_error_per_round(
         num_rounds = num_rounds[1:]
         logical_error_probabilities = logical_error_probabilities[1:]
         logical_error_probabilities_stddev = logical_error_probabilities_stddev[1:]
+        lep_fits = lep_fits[1:]
 
     # Filter out the r == 1 input if not forced to include it by the user.
     if num_rounds.size > 0 and num_rounds[0] == 1 and not force_include_single_round:
         num_rounds = num_rounds[1:]
         logical_error_probabilities = logical_error_probabilities[1:]
         logical_error_probabilities_stddev = logical_error_probabilities_stddev[1:]
+        lep_fits = lep_fits[1:]
 
     # Filter out logical error probabilities above 0.5 as that will lead to negative
     # fidelities.
@@ -145,6 +207,7 @@ def compute_logical_error_per_round(
         logical_error_probabilities_stddev = logical_error_probabilities_stddev[
             valid_lep_indices
         ]
+        lep_fits = [lep_fits[i] for i, ok in enumerate(valid_lep_indices) if ok]
 
     # Checking the validity of the filtered data.
     if num_rounds.size == 0:
@@ -165,6 +228,9 @@ def compute_logical_error_per_round(
         rounds = num_rounds[0]
         lep = float(logical_error_probabilities[0])
         lep_stddev = float(logical_error_probabilities_stddev[0])
+        point_fit = lep_fits[0]
+        if point_fit is not None:
+            lep_stddev = effective_stddev_from_fit(point_fit)
         # Implement Eq. (4) from section A.2.2. at page 40 of
         # https://arxiv.org/pdf/2310.05900.
         estimated_logical_error_per_round = (1 - (1 - 2 * lep) ** (1 / rounds)) / 2
@@ -379,6 +445,55 @@ def simulate_different_round_numbers_for_lep_per_round_estimation(
     return np.asarray(nrounds), np.asarray(nfails), np.asarray(nshots)
 
 
+def calculate_lep_and_lep_fit(
+    fails: npt.NDArray[np.int_] | Sequence[int] | int,
+    shots: npt.NDArray[np.int_] | Sequence[int] | int,
+    *,
+    max_likelihood_factor: float = DEFAULT_MAX_LIKELIHOOD_FACTOR,
+) -> tuple[npt.NDArray[np.float64], list[ProbabilityFit]]:
+    """Estimate logical error probability with asymmetric binomial likelihood bars.
+
+    Uses the same likelihood-interval construction as Stim's ``sinter.fit_binomial``;
+    see :mod:`deltakit_core.analysis` and
+    https://quantumcomputing.stackexchange.com/a/37268/1386.
+
+    Args:
+        fails: Number of logical failures per experiment.
+        shots: Number of shots per experiment.
+        max_likelihood_factor: Hypotheses with likelihood below
+            ``best_likelihood / max_likelihood_factor`` are excluded from the interval.
+
+    Returns:
+        Tuple of the maximum-likelihood LEP array (``fails / shots``) and one
+        :class:`~deltakit_core.analysis.ProbabilityFit` per input point.
+
+    Raises:
+        ValueError: When inputs do not match lengths, ``fails > shots``, or counts are
+            negative.
+    """
+    fails = np.asarray([fails]) if isinstance(fails, int) else np.asarray(fails)
+    shots = np.asarray([shots]) if isinstance(shots, int) else np.asarray(shots)
+    if len(fails) != len(shots):
+        msg = "Input data do not match lengths."
+        raise ValueError(msg)
+    if np.any(fails < 0) or np.any(shots <= 0) or np.any(fails > shots):
+        msg = (
+            "Need 0 <= fails <= shots and shots > 0 to estimate logical error "
+            "probability."
+        )
+        raise ValueError(msg)
+    low, lep, high = fit_binomial_batch(
+        num_hits=fails,
+        num_shots=shots,
+        max_likelihood_factor=max_likelihood_factor,
+    )
+    fits = [
+        ProbabilityFit(low=float(lo), best=float(be), high=float(hi))
+        for lo, be, hi in zip(low.ravel(), lep.ravel(), high.ravel(), strict=True)
+    ]
+    return lep, fits
+
+
 def calculate_lep_and_lep_stddev(
     fails: npt.NDArray[np.int_] | Sequence[int] | int,
     shots: npt.NDArray[np.int_] | Sequence[int] | int,
@@ -411,9 +526,54 @@ def calculate_lep_and_lep_stddev(
     if len(fails) != len(shots):
         msg = "Input data do not match lengths."
         raise ValueError(msg)
-    if np.any(fails <= 0) or np.any(shots <= 0):
-        msg = "Both `fail` and `shots` must be strictly positive entries to calculate the logical error probability."
+    if np.any(fails < 0) or np.any(shots <= 0) or np.any(fails > shots):
+        msg = (
+            "Need 0 <= fails <= shots and shots > 0 to calculate logical error "
+            "probability."
+        )
         raise ValueError(msg)
-    lep = fails / shots
-    lep_stddev = np.sqrt(lep * (1 - lep) / shots)
+    lep = fails / shots.astype(np.float64)
+    lep_stddev = np.sqrt(lep * (1 - lep) / shots.astype(np.float64))
     return lep, lep_stddev
+
+
+def compute_logical_error_per_round_from_counts(
+    num_rounds: npt.NDArray[np.int_] | Sequence[int],
+    fails: npt.NDArray[np.int_] | Sequence[int],
+    shots: npt.NDArray[np.int_] | Sequence[int],
+    *,
+    max_likelihood_factor: float = DEFAULT_MAX_LIKELIHOOD_FACTOR,
+    use_asymmetric_uncertainty: bool = True,
+    force_include_single_round: bool = False,
+) -> LogicalErrorProbabilityPerRoundData:
+    """Compute LEPPR from shot counts using binomial intervals when requested.
+
+    Args:
+        num_rounds: Number of rounds for each experiment.
+        fails: Number of logical failures per experiment.
+        shots: Number of shots per experiment.
+        max_likelihood_factor: Passed to :func:`~deltakit_core.analysis.fit_binomial`.
+        use_asymmetric_uncertainty: If ``True``, use binomial likelihood intervals
+            for the weighted fit. If ``False``, use symmetric Gaussian approximation.
+        force_include_single_round: Passed to :func:`compute_logical_error_per_round`.
+
+    Returns:
+        LEPPR results from :func:`compute_logical_error_per_round`.
+    """
+    lep, fits = calculate_lep_and_lep_fit(
+        fails, shots, max_likelihood_factor=max_likelihood_factor
+    )
+    if use_asymmetric_uncertainty:
+        return compute_logical_error_per_round(
+            num_rounds,
+            lep,
+            logical_error_probabilities_fit=fits,
+            force_include_single_round=force_include_single_round,
+        )
+    _, std = calculate_lep_and_lep_stddev(fails, shots)
+    return compute_logical_error_per_round(
+        num_rounds,
+        lep,
+        std,
+        force_include_single_round=force_include_single_round,
+    )

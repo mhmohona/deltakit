@@ -6,8 +6,10 @@ import numpy as np
 import pytest
 
 from deltakit_explorer.analysis import (
+    calculate_lep_and_lep_fit,
     calculate_lep_and_lep_stddev,
     compute_logical_error_per_round,
+    compute_logical_error_per_round_from_counts,
 )
 
 
@@ -22,10 +24,10 @@ class TestLEPPerRoundComputation:
         with pytest.raises(ValueError, match="do not match lengths."):
             calculate_lep_and_lep_stddev(fails=fails, shots=[500000] * 2)
 
-        with pytest.raises(ValueError, match="must be strictly positive"):
+        with pytest.raises(ValueError, match="0 <= fails"):
             calculate_lep_and_lep_stddev(fails=[498, 151, -34], shots=shots)
 
-        with pytest.raises(ValueError, match="must be strictly positive"):
+        with pytest.raises(ValueError, match="0 <= fails"):
             calculate_lep_and_lep_stddev(
                 fails=fails, shots=[500_000, -500_000, 500_000]
             )
@@ -182,12 +184,66 @@ class TestLEPPerRoundComputation:
         assert isinstance(res.leppr_stddev, float)
 
 
+class TestCalculateLepFit:
+    def test_allows_zero_fails(self) -> None:
+        lep, fits = calculate_lep_and_lep_fit(fails=0, shots=1000)
+        assert lep == pytest.approx(0.0)
+        assert fits[0].best == 0.0
+        assert fits[0].upper_margin > fits[0].lower_margin
+
+    def test_matches_fit_binomial_example(self) -> None:
+        lep, fits = calculate_lep_and_lep_fit(
+            fails=[5, 2], shots=[10, 100_000_000], max_likelihood_factor=9
+        )
+        assert lep[0] == pytest.approx(0.5)
+        assert fits[0].low == pytest.approx(0.202, abs=1e-3)
+        assert fits[0].high == pytest.approx(0.798, abs=1e-3)
+
+
+class TestComputeLepprWithFits:
+    def test_requires_stddev_or_fit(self) -> None:
+        with pytest.raises(ValueError, match="stddev` or"):
+            compute_logical_error_per_round([2, 4], [0.01, 0.02])
+
+    def test_asymmetric_weights_change_fit_vs_symmetric(self) -> None:
+        rounds = [5, 10, 15, 20]
+        fails = [9949, 8434, 9649, 9926]
+        shots = [50000, 20000, 20000, 20000]
+        lep, std = calculate_lep_and_lep_stddev(fails, shots)
+        _, fits = calculate_lep_and_lep_fit(fails, shots)
+        res_sym = compute_logical_error_per_round(rounds, lep, std)
+        res_asym = compute_logical_error_per_round(
+            rounds, lep, logical_error_probabilities_fit=fits
+        )
+        assert (
+            res_sym.leppr != res_asym.leppr
+            or res_sym.leppr_stddev != res_asym.leppr_stddev
+        )
+
+    @pytest.mark.filterwarnings("always::UserWarning")
+    def test_from_counts_matches_manual(self) -> None:
+        rounds = [2, 4, 6]
+        fails = [34, 151, 356]
+        shots = [500_000, 500_000, 500_000]
+        lep, fits = calculate_lep_and_lep_fit(fails, shots)
+        with pytest.warns(UserWarning, match="below 0.2"):
+            expected = compute_logical_error_per_round(
+                rounds, lep, logical_error_probabilities_fit=fits
+            )
+        with pytest.warns(UserWarning, match="below 0.2"):
+            actual = compute_logical_error_per_round_from_counts(rounds, fails, shots)
+        assert actual == expected
+
+
 class TestCalculateLep:
-    def test_calculate_lep_no_fails_raises(self):
-        fails = [500, 200, 25, 0]
-        shots = 50000
+    def test_calculate_lep_zero_fails_allowed(self) -> None:
+        lep, std = calculate_lep_and_lep_stddev(fails=0, shots=1000)
+        assert lep == pytest.approx(0.0)
+        assert std == pytest.approx(0.0)
+
+    def test_calculate_lep_length_mismatch_raises(self) -> None:
         with pytest.raises(ValueError, match="do not match lengths."):
-            calculate_lep_and_lep_stddev(fails=fails, shots=shots)
+            calculate_lep_and_lep_stddev(fails=[500, 200, 25, 0], shots=50000)
 
     def test_calculate_lep_returns_correct_values_with_scalars(self):
         true_lep = 0.1
