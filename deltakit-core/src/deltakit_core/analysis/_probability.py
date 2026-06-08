@@ -119,7 +119,7 @@ def binary_search(
     return max_x if abs(dmax) < abs(dmin) else min_x
 
 
-DEFAULT_MAX_LIKELIHOOD_FACTOR = 1000.0
+DEFAULT_MAX_LIKELIHOOD_FACTOR: float = 1000.0
 
 
 def fit_binomial(
