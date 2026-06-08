@@ -61,7 +61,7 @@ def log_binomial(
     Args:
         p: Success probability, scalar or array in ``[0, 1]``.
         n_trials: Number of trials.
-        hits: Number of observed successes.
+        n_successes: Number of observed successes.
 
     Returns:
         Log-likelihood array with the same shape as ``p``.
