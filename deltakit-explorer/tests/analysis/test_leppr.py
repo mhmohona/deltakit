@@ -232,7 +232,11 @@ class TestComputeLepprWithFits:
             )
         with pytest.warns(UserWarning, match="below 0.2"):
             actual = compute_logical_error_per_round_from_counts(rounds, fails, shots)
-        assert actual == expected
+        assert actual.leppr == pytest.approx(expected.leppr)
+        assert actual.leppr_stddev == pytest.approx(expected.leppr_stddev)
+        assert np.array_equal(actual.num_rounds, expected.num_rounds)
+        assert actual.spam_error == pytest.approx(expected.spam_error)
+        assert actual.spam_error_stddev == pytest.approx(expected.spam_error_stddev)
 
 
 class TestCalculateLep:

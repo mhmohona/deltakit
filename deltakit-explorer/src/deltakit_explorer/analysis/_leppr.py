@@ -57,17 +57,6 @@ class LogicalErrorProbabilityPerRoundData:
     spam_error: float
     spam_error_stddev: float
 
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, LogicalErrorProbabilityPerRoundData):
-            return NotImplemented
-        return (
-            self.leppr == other.leppr
-            and self.leppr_stddev == other.leppr_stddev
-            and np.array_equal(self.num_rounds, other.num_rounds)
-            and self.spam_error == other.spam_error
-            and self.spam_error_stddev == other.spam_error_stddev
-        )
-
 
 def compute_logical_error_per_round(
     num_rounds: npt.NDArray[np.int_] | Sequence[int],

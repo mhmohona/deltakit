@@ -30,6 +30,20 @@ class ProbabilityFit:
     best: float
     high: float
 
+    def __post_init__(self) -> None:
+        if self.low < 0 or self.best < 0 or self.high < 0:
+            msg = (
+                f"low, best, and high must be non-negative, got "
+                f"low={self.low}, best={self.best}, high={self.high}"
+            )
+            raise ValueError(msg)
+        if not (self.low <= self.best <= self.high):
+            msg = (
+                f"need low <= best <= high, got "
+                f"low={self.low}, best={self.best}, high={self.high}"
+            )
+            raise ValueError(msg)
+
     @property
     def lower_margin(self) -> float:
         """Distance from ``best`` down to ``low``."""
@@ -39,18 +53,6 @@ class ProbabilityFit:
     def upper_margin(self) -> float:
         """Distance from ``best`` up to ``high``."""
         return self.high - self.best
-
-
-def log_factorial(n: int) -> float:
-    """Natural log of ``n!``.
-
-    Args:
-        n: Non-negative integer.
-
-    Returns:
-        ``ln(n!)``.
-    """
-    return math.lgamma(n + 1)
 
 
 def log_binomial(
@@ -65,22 +67,28 @@ def log_binomial(
 
     Returns:
         Log-likelihood array with the same shape as ``p``.
+
+    Raises:
+        ValueError: If any element of ``p`` is outside ``[0, 1]``.
     """
-    p_clipped = np.clip(p, 0, 1)
-    result: np.ndarray = np.zeros(shape=p_clipped.shape, dtype=np.float64)
+    p_arr = np.asarray(p, dtype=np.float64)
+    if np.any((p_arr < 0) | (p_arr > 1)):
+        msg = "p must be in [0, 1]."
+        raise ValueError(msg)
+    result: np.ndarray = np.zeros(shape=p_arr.shape, dtype=np.float64)
     misses = n - hits
 
     if hits != 0:
-        result[p_clipped == 0] = -np.inf
+        result[p_arr == 0] = -np.inf
     if misses != 0:
-        result[p_clipped == 1] = -np.inf
+        result[p_arr == 1] = -np.inf
 
-    nonzero = p_clipped != 0
-    result[nonzero] += np.log(p_clipped[nonzero]) * float(hits)
-    not_one = p_clipped != 1
-    result[not_one] += np.log1p(-p_clipped[not_one]) * float(misses)
+    nonzero = p_arr != 0
+    result[nonzero] += np.log(p_arr[nonzero]) * float(hits)
+    not_one = p_arr != 1
+    result[not_one] += np.log1p(-p_arr[not_one]) * float(misses)
 
-    log_n_choose_hits = log_factorial(n) - log_factorial(misses) - log_factorial(hits)
+    log_n_choose_hits = math.log(math.comb(n, hits))
     result += log_n_choose_hits
     return result
 
@@ -158,28 +166,36 @@ def fit_binomial(
     best = num_hits / num_shots
     log_max_likelihood = log_binomial(p=best, n=num_shots, hits=num_hits)
     target_log_likelihood = log_max_likelihood - math.log(max_likelihood_factor)
-    acc = 100
+    rate_discretization_scale = 100
     low = (
         binary_search(
             func=lambda exp_err: float(
-                log_binomial(p=exp_err / (acc * num_shots), n=num_shots, hits=num_hits)
+                log_binomial(
+                    p=exp_err / (rate_discretization_scale * num_shots),
+                    n=num_shots,
+                    hits=num_hits,
+                )
             ),
             target=float(target_log_likelihood),
             min_x=0,
-            max_x=num_hits * acc,
+            max_x=num_hits * rate_discretization_scale,
         )
-        / acc
+        / rate_discretization_scale
     )
     high = (
         binary_search(
             func=lambda exp_err: float(
-                -log_binomial(p=exp_err / (acc * num_shots), n=num_shots, hits=num_hits)
+                -log_binomial(
+                    p=exp_err / (rate_discretization_scale * num_shots),
+                    n=num_shots,
+                    hits=num_hits,
+                )
             ),
             target=float(-target_log_likelihood),
-            min_x=num_hits * acc,
-            max_x=num_shots * acc,
+            min_x=num_hits * rate_discretization_scale,
+            max_x=num_shots * rate_discretization_scale,
         )
-        / acc
+        / rate_discretization_scale
     )
     return ProbabilityFit(
         best=best,

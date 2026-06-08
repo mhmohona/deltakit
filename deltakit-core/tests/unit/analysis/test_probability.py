@@ -7,7 +7,28 @@ from deltakit_core.analysis import (
     effective_stddev_from_fit,
     fit_binomial,
     fit_binomial_batch,
+    log_binomial,
 )
+
+
+class TestProbabilityFit:
+    def test_rejects_negative_values(self) -> None:
+        with pytest.raises(ValueError, match="must be non-negative"):
+            ProbabilityFit(low=-0.1, best=0.5, high=0.8)
+
+    def test_rejects_invalid_ordering(self) -> None:
+        with pytest.raises(ValueError, match="need low <= best <= high"):
+            ProbabilityFit(low=0.6, best=0.5, high=0.8)
+
+
+class TestLogBinomial:
+    def test_rejects_p_outside_unit_interval(self) -> None:
+        with pytest.raises(ValueError, match="p must be in \\[0, 1\\]"):
+            log_binomial(p=1.1, n=10, hits=2)
+
+    def test_rejects_array_p_outside_unit_interval(self) -> None:
+        with pytest.raises(ValueError, match="p must be in \\[0, 1\\]"):
+            log_binomial(p=[0.1, 1.5], n=10, hits=2)
 
 
 class TestFitBinomial:
