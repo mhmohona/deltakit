@@ -72,7 +72,7 @@ def log_binomial(
 
     if hits != 0:
         result[p_clipped == 0] = -np.inf
-    if misses:
+    if misses != 0:
         result[p_clipped == 1] = -np.inf
 
     nonzero = p_clipped != 0
