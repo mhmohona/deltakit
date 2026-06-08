@@ -145,7 +145,7 @@ def fit_binomial(
             ``num_shots < 0``, or ``num_hits > num_shots``.
     """
     if max_likelihood_factor < 1:
-        msg = f"max_likelihood_factor={max_likelihood_factor} must be >= 1"
+        msg = f"max_likelihood_factor={max_likelihood_factor} must be greater or equal than 1."
         raise ValueError(msg)
     if num_hits < 0 or num_shots < 0 or num_hits > num_shots:
         msg = (
