@@ -70,7 +70,7 @@ def log_binomial(
     result: np.ndarray = np.zeros(shape=p_clipped.shape, dtype=np.float64)
     misses = n - hits
 
-    if hits:
+    if hits != 0:
         result[p_clipped == 0] = -np.inf
     if misses:
         result[p_clipped == 1] = -np.inf
