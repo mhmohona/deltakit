@@ -31,9 +31,16 @@ class ProbabilityFit:
     high: float
 
     def __post_init__(self) -> None:
-        if self.low < 0 or self.best < 0 or self.high < 0:
+        if (
+            self.low < 0
+            or self.best < 0
+            or self.high < 0
+            or self.low > 1
+            or self.best > 1
+            or self.high > 1
+        ):
             msg = (
-                f"low, best, and high must be non-negative, got "
+                f"low, best, and high must be in [0, 1], got "
                 f"low={self.low}, best={self.best}, high={self.high}"
             )
             raise ValueError(msg)
@@ -62,8 +69,8 @@ def log_binomial(
 
     Args:
         p: Success probability, scalar or array in ``[0, 1]``.
-        n_trials: Number of trials.
-        n_successes: Number of observed successes.
+        n: Number of trials.
+        hits: Number of observed successes.
 
     Returns:
         Log-likelihood array with the same shape as ``p``.

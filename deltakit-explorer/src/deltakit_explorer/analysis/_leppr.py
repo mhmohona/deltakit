@@ -136,7 +136,7 @@ def compute_logical_error_per_round(
         if len(logical_error_probabilities_fit) != num_rounds.size:
             msg = "logical_error_probabilities_fit length must match num_rounds."
             raise ValueError(msg)
-        lep_fits: list[ProbabilityFit | None] = list(logical_error_probabilities_fit)
+        lep_fits: list[ProbabilityFit] = list(logical_error_probabilities_fit)
     else:
         lep_fits = [None] * num_rounds.size
 

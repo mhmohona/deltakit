@@ -12,9 +12,11 @@ from deltakit_core.analysis import (
 
 
 class TestProbabilityFit:
-    def test_rejects_negative_values(self) -> None:
-        with pytest.raises(ValueError, match="must be non-negative"):
+    def test_rejects_values_outside_unit_interval(self) -> None:
+        with pytest.raises(ValueError, match="must be in \\[0, 1\\]"):
             ProbabilityFit(low=-0.1, best=0.5, high=0.8)
+        with pytest.raises(ValueError, match="must be in \\[0, 1\\]"):
+            ProbabilityFit(low=0.1, best=0.5, high=1.1)
 
     def test_rejects_invalid_ordering(self) -> None:
         with pytest.raises(ValueError, match="need low <= best <= high"):
