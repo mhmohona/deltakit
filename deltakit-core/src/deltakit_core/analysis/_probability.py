@@ -1,7 +1,23 @@
 # (c) Copyright Riverlane 2020-2025.
 """Binomial likelihood intervals for logical error probability estimates.
 
-Adapted from Stim's ``sinter._probability_util`` (Apache-2.0, quantumlib/Stim).
+Adapted from Stim's ``sinter._probability_util`` (Apache-2.0,
+https://github.com/quantumlib/Stim/). Source at v1.15.0:
+https://github.com/quantumlib/Stim/blob/main/glue/sample/src/sinter/_probability_util.py
+
+Changes from the original file:
+
+- ported only ``log_binomial``, ``binary_search``, and ``fit_binomial`` (not line
+  fits, ``shot_error_rate_to_piece_error_rate``, or other helpers in that file)
+- renamed ``Fit`` to ``ProbabilityFit`` with required ``float`` fields, ``[0, 1]``
+  validation, ordering checks, and ``lower_margin`` / ``upper_margin`` properties
+- ``log_binomial``: reject ``p`` outside ``[0, 1]`` instead of clipping; use
+  ``math.comb`` instead of ``log_factorial``; ``float64`` arrays
+- ``fit_binomial``: default ``max_likelihood_factor`` via
+  ``DEFAULT_MAX_LIKELIHOOD_FACTOR`` (1000.0); validate shot/hit counts
+- added ``fit_binomial_batch``, ``effective_stddev_from_fit``,
+  ``effective_stddev_from_fits``, and ``asymmetric_yerr_from_fits``
+
 See https://quantumcomputing.stackexchange.com/a/37268/1386 for interpretation.
 """
 
@@ -160,7 +176,10 @@ def fit_binomial(
             ``num_shots < 0``, or ``num_hits > num_shots``.
     """
     if max_likelihood_factor < 1:
-        msg = f"max_likelihood_factor={max_likelihood_factor} must be greater or equal than 1."
+        msg = (
+            f"max_likelihood_factor={max_likelihood_factor} must be "
+            f"greater or equal than 1."
+        )
         raise ValueError(msg)
     if num_hits < 0 or num_shots < 0 or num_hits > num_shots:
         msg = (

@@ -22,6 +22,24 @@ def _resolve_lep_input_stddevs(
     | None,
     logical_error_probabilities_fit: Sequence[ProbabilityFit] | None,
 ) -> npt.NDArray[np.float64]:
+    """Resolve per-point standard deviations for LEPPR weighted fitting.
+
+    Args:
+        logical_error_probabilities_stddev:
+            symmetric standard deviation per point (Gaussian approximation). Provide
+            this or ``logical_error_probabilities_fit``.
+        logical_error_probabilities_fit:
+            binomial likelihood intervals per point. When set, used for weighted fit
+            (average of lower/upper margins as effective sigma). Overrides
+            ``logical_error_probabilities_stddev`` if both are given (with a warning).
+
+    Returns:
+        npt.NDArray[numpy.float64]: per-point standard deviations.
+
+    Raises:
+        ValueError: if neither ``logical_error_probabilities_stddev`` nor
+            ``logical_error_probabilities_fit`` is provided.
+    """
     if logical_error_probabilities_fit is not None:
         if logical_error_probabilities_stddev is not None:
             warnings.warn(
