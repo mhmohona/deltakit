@@ -13,6 +13,77 @@ from deltakit_core.analysis import (
     fit_binomial_batch,
 )
 from scipy.optimize import curve_fit
+from uncertainties import correlated_values, ufloat, unumpy
+from uncertainties.umath import exp as uexp
+
+from deltakit_explorer.analysis._estimate import Estimate
+
+
+def leppr_from_single_point(lep: float, lep_stddev: float, rounds: int) -> Estimate:
+    """Propagate uncertainty for the single-point LEPPR.
+
+    See:
+        - Eq. 4, arXiv:2310.05900.
+
+    Args:
+        lep: Logical error probability.
+        lep_stddev: Standard deviation of the logical error probability.
+        rounds: Number of QEC rounds.
+
+    Returns:
+        LEPPR and its standard deviation.
+    """
+    uncertain_lep = ufloat(lep, lep_stddev)
+    leppr = (1 - (1 - 2 * uncertain_lep) ** (1 / rounds)) / 2
+    return Estimate.from_ufloat(leppr)
+
+
+def log_fidelity_stddev(
+    lep: npt.NDArray[np.floating] | Sequence[float],
+    lep_stddev: npt.NDArray[np.floating] | Sequence[float],
+) -> npt.NDArray[np.float64]:
+    """Standard deviation of ``log(1 - 2*lep)`` for the weighted least-squares fit.
+
+    Args:
+        lep: Logical error probabilities.
+        lep_stddev: Standard deviation of each logical error probability.
+
+    Returns:
+        Standard deviation of log-fidelity for each input point.
+    """
+    lep_arr = np.asarray(lep, dtype=np.float64)
+    std_arr = np.asarray(lep_stddev, dtype=np.float64)
+    uncertain_log_fidelity = unumpy.log(1 - 2 * unumpy.uarray(lep_arr, std_arr))
+    return unumpy.std_devs(uncertain_log_fidelity).astype(np.float64)
+
+
+def epsilon_and_spam_from_log_fit(
+    slope: float,
+    offset: float,
+    cov: npt.NDArray[np.floating],
+) -> tuple[Estimate, Estimate]:
+    """LEPPR and SPAM error from the correlated log-linear fit parameters.
+
+    Following https://arxiv.org/pdf/2505.09684v1 (Methods - Extracting logical
+    error per cycle, page 8), the per-round error and the SPAM error are recovered
+    as ``(1 - exp(slope)) / 2`` and ``(1 - exp(offset)) / 2``, with standard
+    deviations propagated from the fit covariance matrix.
+
+    Args:
+        slope: Slope from the log-fidelity linear fit.
+        offset: Offset from the log-fidelity linear fit.
+        cov: Covariance matrix of the fit parameters.
+
+    Returns:
+        ``(Estimate(leppr, leppr_stddev), Estimate(spam_error, spam_error_stddev))``.
+    """
+    uncertain_slope, uncertain_offset = correlated_values([slope, offset], cov)
+    uncertain_leppr = (1 - uexp(uncertain_slope)) / 2
+    uncertain_spam = (1 - uexp(uncertain_offset)) / 2
+    return (
+        Estimate.from_ufloat(uncertain_leppr),
+        Estimate.from_ufloat(uncertain_spam),
+    )
 
 
 def _resolve_lep_input_stddevs(
@@ -154,7 +225,7 @@ def compute_logical_error_per_round(
         if len(logical_error_probabilities_fit) != num_rounds.size:
             msg = "logical_error_probabilities_fit length must match num_rounds."
             raise ValueError(msg)
-        lep_fits: list[ProbabilityFit] = list(logical_error_probabilities_fit)
+        lep_fits: list[ProbabilityFit | None] = list(logical_error_probabilities_fit)
     else:
         lep_fits = [None] * num_rounds.size
 
@@ -240,9 +311,8 @@ def compute_logical_error_per_round(
             lep_stddev = effective_stddev_from_fit(point_fit)
         # Implement Eq. (4) from section A.2.2. at page 40 of
         # https://arxiv.org/pdf/2310.05900.
-        estimated_logical_error_per_round = (1 - (1 - 2 * lep) ** (1 / rounds)) / 2
-        estimated_logical_error_per_round_stddev = (
-            lep_stddev * (1 - 2 * lep) ** (1 / rounds - 1) / rounds
+        estimated_logical_error_per_round, estimated_logical_error_per_round_stddev = (
+            leppr_from_single_point(lep, lep_stddev, rounds)
         )
         return LogicalErrorProbabilityPerRoundData(
             leppr=estimated_logical_error_per_round,
@@ -272,9 +342,9 @@ def compute_logical_error_per_round(
     # variance of each observation.
     # See https://en.wikipedia.org/wiki/Weighted_least_squares.
     logfidelity = np.log(fidelities)
-    # We approximate the standard deviation with an error propagation analysis. This
-    # method has been tested against scipy and returns similar results.
-    logfidelities_stddev = 2 * logical_error_probabilities_stddev / fidelities
+    logfidelities_stddev = log_fidelity_stddev(
+        logical_error_probabilities, logical_error_probabilities_stddev
+    )
 
     # Note that the covariance matrix is used later to estimate the logical error
     # probability per round standard deviation.
@@ -298,7 +368,6 @@ def compute_logical_error_per_round(
         # bounds=((-numpy.inf, -numpy.inf), (numpy.log(1), numpy.log(1))),
     )
 
-    estimated_logical_error_per_round = float((1 - np.exp(slope)) / 2)
     # Compute the standard R2 (Coefficient of determination) using the formula
     # ``R2 = 1 - SSE / SST`` where SSE is the Sum of Squares Error and SST is the Sum of
     # Square Total that are computed below.
@@ -316,16 +385,15 @@ def compute_logical_error_per_round(
     # per cycle, page 8) we estimate the variance on the logical error probability per
     # round (named Perrc below) using the formula
     #      sigma(Perrc) = (1 - Perrc) * sigma(slope)
-    # The standard deviation on the linear fit parameters can be obtained through the
-    # covariance matrix diagonal entries.
-    slope_stddev, offset_stddev = np.sqrt(np.diagonal(cov))
-    estimated_logical_error_per_round_stddev = float(
-        (1 - 2 * estimated_logical_error_per_round) * slope_stddev / 2
-    )
-    estimated_spam_error = float((1 - np.exp(offset)) / 2)
-    estimated_spam_error_stddev = float(
-        (1 - 2 * estimated_spam_error) * offset_stddev / 2
-    )
+    # The standard deviation on the linear fit parameters is obtained from the
+    # covariance matrix and propagated by the helper below.
+    (
+        (estimated_logical_error_per_round, estimated_logical_error_per_round_stddev),
+        (
+            estimated_spam_error,
+            estimated_spam_error_stddev,
+        ),
+    ) = epsilon_and_spam_from_log_fit(slope, offset, cov)
     return LogicalErrorProbabilityPerRoundData(
         leppr=estimated_logical_error_per_round,
         leppr_stddev=estimated_logical_error_per_round_stddev,
@@ -539,6 +607,8 @@ def calculate_lep_and_lep_stddev(
             "probability."
         )
         raise ValueError(msg)
+    # Wald approximation for binomial LEP; asymmetric intervals are tracked separately
+    # (see issue #134).
     lep = fails / shots.astype(np.float64)
     lep_stddev = np.sqrt(lep * (1 - lep) / shots.astype(np.float64))
     return lep, lep_stddev
