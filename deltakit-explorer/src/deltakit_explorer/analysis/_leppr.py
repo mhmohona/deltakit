@@ -86,48 +86,6 @@ def epsilon_and_spam_from_log_fit(
     )
 
 
-def _resolve_lep_input_stddevs(
-    *,
-    logical_error_probabilities_stddev: npt.NDArray[np.floating]
-    | Sequence[float]
-    | None,
-    logical_error_probabilities_fit: Sequence[ProbabilityFit] | None,
-) -> npt.NDArray[np.float64]:
-    """Resolve per-point standard deviations for LEPPR weighted fitting.
-
-    Args:
-        logical_error_probabilities_stddev:
-            symmetric standard deviation per point (Gaussian approximation). Provide
-            this or ``logical_error_probabilities_fit``.
-        logical_error_probabilities_fit:
-            binomial likelihood intervals per point. When set, used for weighted fit
-            (average of lower/upper margins as effective sigma). Overrides
-            ``logical_error_probabilities_stddev`` if both are given (with a warning).
-
-    Returns:
-        npt.NDArray[numpy.float64]: per-point standard deviations.
-
-    Raises:
-        ValueError: if neither ``logical_error_probabilities_stddev`` nor
-            ``logical_error_probabilities_fit`` is provided.
-    """
-    if logical_error_probabilities_fit is not None:
-        if logical_error_probabilities_stddev is not None:
-            warnings.warn(
-                "Both `logical_error_probabilities_stddev` and "
-                "`logical_error_probabilities_fit` were provided; using fits.",
-                stacklevel=3,
-            )
-        return effective_stddev_from_fits(logical_error_probabilities_fit)
-    if logical_error_probabilities_stddev is None:
-        msg = (
-            "Provide `logical_error_probabilities_stddev` or "
-            "`logical_error_probabilities_fit`."
-        )
-        raise ValueError(msg)
-    return np.asarray(logical_error_probabilities_stddev, dtype=np.float64)
-
-
 @dataclass(frozen=True, eq=False)
 class LogicalErrorProbabilityPerRoundData:
     """Container class to hold `compute_logical_error_per_round` results.
@@ -206,6 +164,14 @@ def compute_logical_error_per_round(
     Returns:
         LEPPRResults: detailed results of the computation.
 
+    Raises:
+        ValueError: If input lengths do not match, neither uncertainty source is
+            provided, no valid data remains after filtering, standard deviations are
+            not strictly positive for multi-point weighted fitting, or
+            ``logical_error_probabilities`` does not match the best estimates in
+            ``logical_error_probabilities_fit``.
+        RuntimeError: If duplicate round numbers are provided.
+
     Examples:
         Calculating per-round logical error probability and its standard deviation
         given number of fails, and number of shots for several rounds::
@@ -219,26 +185,69 @@ def compute_logical_error_per_round(
             spam, spam_stddev = res.spam_error, res.spam_error_stddev
 
     """
-    num_rounds = np.asarray(num_rounds)
-    logical_error_probabilities = np.asarray(logical_error_probabilities)
-    if logical_error_probabilities_fit is not None:
+    num_rounds = np.asarray(num_rounds, dtype=np.int_).ravel()
+    logical_error_probabilities = np.asarray(
+        logical_error_probabilities, dtype=np.float64
+    ).ravel()
+    if logical_error_probabilities.size != num_rounds.size:
+        msg = (
+            "logical_error_probabilities length must match num_rounds, got "
+            f"{logical_error_probabilities.size} and {num_rounds.size}."
+        )
+        raise ValueError(msg)
+    use_probability_fits = logical_error_probabilities_fit is not None
+    if use_probability_fits:
         if len(logical_error_probabilities_fit) != num_rounds.size:
             msg = "logical_error_probabilities_fit length must match num_rounds."
+            raise ValueError(msg)
+        fit_best = np.asarray(
+            [f.best for f in logical_error_probabilities_fit], dtype=np.float64
+        )
+        if not np.allclose(logical_error_probabilities, fit_best):
+            msg = (
+                "logical_error_probabilities must match "
+                "logical_error_probabilities_fit best estimates."
+            )
             raise ValueError(msg)
         lep_fits: list[ProbabilityFit | None] = list(logical_error_probabilities_fit)
     else:
         lep_fits = [None] * num_rounds.size
+    if logical_error_probabilities_stddev is not None:
+        stddev_arr = np.asarray(
+            logical_error_probabilities_stddev, dtype=np.float64
+        ).ravel()
+        if stddev_arr.size != num_rounds.size:
+            msg = (
+                "logical_error_probabilities_stddev length must match num_rounds, "
+                f"got {stddev_arr.size} and {num_rounds.size}."
+            )
+            raise ValueError(msg)
+    else:
+        stddev_arr = None
 
     isort = np.argsort(num_rounds)
     num_rounds = num_rounds[isort]
     logical_error_probabilities = logical_error_probabilities[isort]
-    logical_error_probabilities_stddev = _resolve_lep_input_stddevs(
-        logical_error_probabilities_stddev=logical_error_probabilities_stddev,
-        logical_error_probabilities_fit=lep_fits
-        if logical_error_probabilities_fit is not None
-        else None,
-    )[isort]
     lep_fits = [lep_fits[i] for i in isort]
+    if use_probability_fits:
+        if logical_error_probabilities_stddev is not None:
+            warnings.warn(
+                "Both `logical_error_probabilities_stddev` and "
+                "`logical_error_probabilities_fit` were provided; using fits.",
+                stacklevel=2,
+            )
+        sorted_probability_fits = [logical_error_probabilities_fit[i] for i in isort]
+        logical_error_probabilities_stddev = effective_stddev_from_fits(
+            sorted_probability_fits
+        )
+    elif logical_error_probabilities_stddev is None:
+        msg = (
+            "Provide `logical_error_probabilities_stddev` or "
+            "`logical_error_probabilities_fit`."
+        )
+        raise ValueError(msg)
+    else:
+        logical_error_probabilities_stddev = stddev_arr[isort]
 
     # Check that we do not have duplicate data for the same number of rounds as that
     # will confuse the numerical methods used in this function.
@@ -342,6 +351,12 @@ def compute_logical_error_per_round(
     # variance of each observation.
     # See https://en.wikipedia.org/wiki/Weighted_least_squares.
     logfidelity = np.log(fidelities)
+    if np.any(logical_error_probabilities_stddev <= 0):
+        msg = (
+            "logical_error_probabilities_stddev must be strictly positive for "
+            "weighted fitting."
+        )
+        raise ValueError(msg)
     logfidelities_stddev = log_fidelity_stddev(
         logical_error_probabilities, logical_error_probabilities_stddev
     )

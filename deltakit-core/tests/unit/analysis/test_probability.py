@@ -32,6 +32,14 @@ class TestLogBinomial:
         with pytest.raises(ValueError, match="p must be in \\[0, 1\\]"):
             log_binomial(p=[0.1, 1.5], n=10, hits=2)
 
+    def test_rejects_negative_hits(self) -> None:
+        with pytest.raises(ValueError, match="need 0 <= hits"):
+            log_binomial(p=0.5, n=10, hits=-1)
+
+    def test_rejects_hits_greater_than_n(self) -> None:
+        with pytest.raises(ValueError, match="need 0 <= hits"):
+            log_binomial(p=0.5, n=10, hits=11)
+
 
 class TestFitBinomial:
     def test_matches_sinter_documented_examples(self) -> None:
@@ -56,6 +64,7 @@ class TestFitBinomial:
 
     def test_asymmetric_when_rate_near_zero(self) -> None:
         fit = fit_binomial(num_shots=1_000_000, num_hits=2, max_likelihood_factor=1000)
+        assert fit.low > 0
         assert fit.upper_margin > fit.lower_margin
         assert fit.best == pytest.approx(2e-6)
 

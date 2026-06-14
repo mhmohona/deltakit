@@ -2,8 +2,10 @@ import itertools
 import re
 from math import sqrt
 
+import matplotlib as mpl
 import numpy as np
 import pytest
+from deltakit_core.analysis import ProbabilityFit
 
 from deltakit_explorer.analysis import (
     calculate_lep_and_lep_fit,
@@ -11,6 +13,9 @@ from deltakit_explorer.analysis import (
     compute_logical_error_per_round,
     compute_logical_error_per_round_from_counts,
 )
+from deltakit_explorer.plotting._leppr import plot_logical_error_probability_per_round
+
+mpl.use("Agg")
 
 
 class TestLEPPerRoundComputation:
@@ -205,6 +210,40 @@ class TestComputeLepprWithFits:
         with pytest.raises(ValueError, match="stddev` or"):
             compute_logical_error_per_round([2, 4], [0.01, 0.02])
 
+    def test_raises_when_lep_length_mismatch(self) -> None:
+        with pytest.raises(ValueError, match="logical_error_probabilities length"):
+            compute_logical_error_per_round([2, 4, 6], [0.01, 0.02], [1e-3, 1e-3, 1e-3])
+
+    def test_raises_when_stddev_length_mismatch(self) -> None:
+        with pytest.raises(ValueError, match="stddev length"):
+            compute_logical_error_per_round([2, 4], [0.01, 0.02], [1e-3])
+
+    def test_raises_when_stddev_not_positive(self) -> None:
+        with pytest.raises(ValueError, match="strictly positive"):
+            compute_logical_error_per_round(
+                [2, 4, 6], [0.01, 0.02, 0.03], [0.0, 1e-3, 1e-3]
+            )
+
+    def test_raises_when_lep_does_not_match_fit_best(self) -> None:
+        rounds = [5, 10, 15, 20]
+        lep, fits = calculate_lep_and_lep_fit(
+            fails=[9949, 8434, 9649, 9926],
+            shots=[50000, 20000, 20000, 20000],
+        )
+        bad_lep = lep.copy()
+        bad_lep[0] = 0.99
+        with pytest.raises(ValueError, match="must match"):
+            compute_logical_error_per_round(
+                rounds, bad_lep, logical_error_probabilities_fit=fits
+            )
+
+    def test_accepts_nested_array_inputs(self) -> None:
+        rounds = np.array([[2, 4, 6]])
+        lep = np.array([[0.01, 0.02, 0.03]])
+        std = np.array([[1e-3, 1e-3, 1e-3]])
+        with pytest.warns(UserWarning, match="below 0.2"):
+            compute_logical_error_per_round(rounds, lep, std)
+
     def test_asymmetric_weights_change_fit_vs_symmetric(self) -> None:
         rounds = [5, 10, 15, 20]
         fails = [9949, 8434, 9649, 9926]
@@ -237,6 +276,26 @@ class TestComputeLepprWithFits:
         assert np.array_equal(actual.num_rounds, expected.num_rounds)
         assert actual.spam_error == pytest.approx(expected.spam_error)
         assert actual.spam_error_stddev == pytest.approx(expected.spam_error_stddev)
+
+
+class TestPlotLogicalErrorProbabilityPerRound:
+    def test_raises_when_lep_does_not_match_fit_best(self) -> None:
+        rounds = [2, 4]
+        lep = [0.01, 0.02]
+        fits = [
+            ProbabilityFit(low=0.005, best=0.01, high=0.02),
+            ProbabilityFit(low=0.015, best=0.02, high=0.03),
+        ]
+        res = compute_logical_error_per_round(
+            rounds, lep, logical_error_probabilities_fit=fits
+        )
+        with pytest.raises(ValueError, match="must match"):
+            plot_logical_error_probability_per_round(
+                res,
+                num_rounds=rounds,
+                logical_error_probability=[0.99, 0.02],
+                logical_error_probability_fit=fits,
+            )
 
 
 class TestCalculateLep:

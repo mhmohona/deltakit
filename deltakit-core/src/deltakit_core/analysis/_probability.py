@@ -3,7 +3,7 @@
 
 Adapted from Stim's ``sinter._probability_util`` (Apache-2.0,
 https://github.com/quantumlib/Stim/). Source at v1.15.0:
-https://github.com/quantumlib/Stim/blob/main/glue/sample/src/sinter/_probability_util.py
+https://github.com/quantumlib/Stim/blob/v1.15.0/glue/sample/src/sinter/_probability_util.py
 
 Changes from the original file:
 
@@ -12,7 +12,8 @@ Changes from the original file:
 - renamed ``Fit`` to ``ProbabilityFit`` with required ``float`` fields, ``[0, 1]``
   validation, ordering checks, and ``lower_margin`` / ``upper_margin`` properties
 - ``log_binomial``: reject ``p`` outside ``[0, 1]`` instead of clipping; use
-  ``math.comb`` instead of ``log_factorial``; ``float64`` arrays
+  ``math.lgamma`` for the binomial coefficient (same approach as Stim's
+  ``log_factorial``); ``float64`` arrays
 - ``fit_binomial``: default ``max_likelihood_factor`` via
   ``DEFAULT_MAX_LIKELIHOOD_FACTOR`` (1000.0); validate shot/hit counts
 - added ``fit_binomial_batch``, ``effective_stddev_from_fit``,
@@ -92,7 +93,8 @@ def log_binomial(
         Log-likelihood array with the same shape as ``p``.
 
     Raises:
-        ValueError: If any element of ``p`` is outside ``[0, 1]``.
+        ValueError: If any element of ``p`` is outside ``[0, 1]``, or if ``hits`` is
+            negative or greater than ``n``.
     """
     p_arr = np.asarray(p, dtype=np.float64)
     if np.any((p_arr < 0) | (p_arr > 1)):
@@ -100,6 +102,9 @@ def log_binomial(
         raise ValueError(msg)
     result: np.ndarray = np.zeros(shape=p_arr.shape, dtype=np.float64)
     misses = n - hits
+    if hits < 0 or misses < 0:
+        msg = f"need 0 <= hits={hits} <= n={n}, got invalid range"
+        raise ValueError(msg)
 
     if hits != 0:
         result[p_arr == 0] = -np.inf
@@ -111,7 +116,9 @@ def log_binomial(
     not_one = p_arr != 1
     result[not_one] += np.log1p(-p_arr[not_one]) * float(misses)
 
-    log_n_choose_hits = math.log(math.comb(n, hits))
+    log_n_choose_hits = (
+        math.lgamma(n + 1) - math.lgamma(hits + 1) - math.lgamma(misses + 1)
+    )
     result += log_n_choose_hits
     return result
 

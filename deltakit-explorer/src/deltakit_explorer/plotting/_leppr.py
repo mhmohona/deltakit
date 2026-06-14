@@ -122,6 +122,11 @@ def plot_logical_error_probability_per_round(
     Returns:
         The matplotlib Figure and Axes objects containing the plot.
 
+    Raises:
+        ValueError: If mutually exclusive uncertainty arguments are both provided,
+            input lengths do not match, or ``logical_error_probability`` does not match
+            the best estimates in ``logical_error_probability_fit``.
+
     Example:
 
         >>> from deltakit_explorer.analysis import (
@@ -174,6 +179,14 @@ def plot_logical_error_probability_per_round(
     error_label = f"Logical error probabilities (±{num_sigmas}σ)"  # noqa: RUF001
     if logical_error_probability_fit is not None:
         fits = [logical_error_probability_fit[i] for i in isort]
+        fit_best = np.asarray([f.best for f in fits], dtype=np.float64)
+        if not np.allclose(logical_error_probability, fit_best):
+            msg = (
+                "logical_error_probability must match "
+                "logical_error_probability_fit best estimates."
+            )
+            raise ValueError(msg)
+        logical_error_probability = fit_best
         yerr = asymmetric_yerr_from_fits(fits)
         error_label = "Logical error probabilities (likelihood interval)"
     elif logical_error_probability_stddev is not None:
