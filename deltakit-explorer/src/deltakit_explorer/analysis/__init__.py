@@ -1,14 +1,6 @@
 # (c) Copyright Riverlane 2020-2025.
 """Description of ``deltakit.explorer.analysis`` namespace here."""
 
-from deltakit_explorer.analysis._analysis import (
-    get_exp_fit,
-    get_lambda_fit,
-)
-from deltakit_explorer.analysis._lambda import (
-    LambdaData,
-    calculate_lambda_and_lambda_stddev,
-)
 from deltakit_core.analysis import (
     DEFAULT_MAX_LIKELIHOOD_FACTOR,
     ProbabilityFit,
@@ -17,6 +9,15 @@ from deltakit_core.analysis import (
     effective_stddev_from_fits,
     fit_binomial,
     fit_binomial_batch,
+)
+
+from deltakit_explorer.analysis._analysis import (
+    get_exp_fit,
+    get_lambda_fit,
+)
+from deltakit_explorer.analysis._lambda import (
+    LambdaData,
+    calculate_lambda_and_lambda_stddev,
 )
 from deltakit_explorer.analysis._leppr import (
     LogicalErrorProbabilityPerRoundData,
