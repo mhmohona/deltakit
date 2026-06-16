@@ -52,7 +52,7 @@ tests_extras = [
   "pandas~=2.2,>=2.2.2",
 ]
 test = [
-  "pytest>=9.0",
+  "pytest>=9.0,<9.1.0",
   "pytest-cov>=7.0",
   "pytest-skip-slow>=0.0.5",
   { include-group = "tests_extras" },
@@ -70,7 +70,7 @@ docs_extras = [
 docs = [
   { include-group = "docs_extras" },
   "myst_nb>=1.0",
-  "sphinxawesome-theme>=5.3,<6.0.3",
+  "sphinxawesome-theme>=5.3,<6.0.6",
   "sphinx-autodoc-typehints>=3.0",
   "sphinx-copybutton>=0.5",
   "sphinx-design>=0.6",
